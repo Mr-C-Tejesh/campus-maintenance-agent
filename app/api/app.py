@@ -9,12 +9,28 @@ try:
 except ImportError:
     pass
 
+from contextlib import asynccontextmanager
+import logging
+
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Eagerly pre-warm vector store and embeddings on startup so first user requests are fast
+    try:
+        from app.api.routes import get_workflow
+        get_workflow()
+    except Exception as e:
+        logger.warning(f"Startup workflow warmup note: {e}")
+    yield
+
 def create_app() -> FastAPI:
     """Factory creating and configuring the FastAPI application."""
     app = FastAPI(
         title="Campus/Facility Infrastructure Decision-Support API",
         description="RESTful API for campus maintenance retrieval, diagnosis, recommendations, and technician feedback loop.",
         version="1.0.0",
+        lifespan=lifespan,
     )
 
     # Base CORS origins for local frontend development

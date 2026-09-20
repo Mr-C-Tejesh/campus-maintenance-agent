@@ -14,12 +14,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+_workflow_instance: Optional[MaintenanceWorkflow] = None
+_feedback_service_instance: Optional[FeedbackService] = None
+
 # Dependency providers (can be overridden in tests via app.dependency_overrides)
 def get_workflow() -> MaintenanceWorkflow:
-    return MaintenanceWorkflow()
+    global _workflow_instance
+    if _workflow_instance is None:
+        _workflow_instance = MaintenanceWorkflow()
+    return _workflow_instance
 
 def get_feedback_service() -> FeedbackService:
-    return FeedbackService()
+    global _feedback_service_instance
+    if _feedback_service_instance is None:
+        _feedback_service_instance = FeedbackService()
+    return _feedback_service_instance
 
 def get_registry() -> WorkflowRegistry:
     return default_registry
