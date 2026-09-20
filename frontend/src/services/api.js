@@ -76,7 +76,7 @@ export const api = {
    * @param {{ complaint: string, equipment_type?: string, top_k?: number }} params
    * @returns {Promise<any>} WorkflowResult
    */
-  async analyzeComplaint({ complaint, equipment_type, top_k = 5 }) {
+  async analyzeComplaint({ complaint, equipment_type, location, top_k = 5 }) {
     const payload = {
       complaint: complaint.trim(),
       top_k,
@@ -84,11 +84,15 @@ export const api = {
     if (equipment_type && equipment_type !== 'All Equipment') {
       payload.equipment_type = equipment_type;
     }
+    if (location && location.trim() !== '') {
+      payload.location = location.trim();
+    }
     return request('/api/v1/analyze', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
   },
+
 
   /**
    * Submits technician operational feedback for an executed workflow.

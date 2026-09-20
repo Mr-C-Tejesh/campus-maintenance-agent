@@ -40,8 +40,10 @@ def analyze_complaint(
         result = workflow.process_complaint(
             complaint=request.complaint,
             equipment_type=request.equipment_type,
+            location=request.location,
             top_k=request.top_k or 5
         )
+
     except Exception as e:
         logger.error(f"Unexpected error in workflow execution: {e}")
         raise HTTPException(

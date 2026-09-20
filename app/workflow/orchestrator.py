@@ -36,6 +36,7 @@ class MaintenanceWorkflow:
         self,
         complaint: str,
         equipment_type: Optional[str] = None,
+        location: Optional[str] = None,
         top_k: int = 5,
         workflow_id: Optional[str] = None
     ) -> WorkflowResult:
@@ -44,7 +45,8 @@ class MaintenanceWorkflow:
         Input Validation -> Semantic Retrieval -> Diagnosis -> Recommendation -> Result
         """
         wf_id = workflow_id or f"wf-{uuid.uuid4().hex[:8]}"
-        logger.info(f"Workflow {wf_id} started. Equipment filter: '{equipment_type or 'None'}'")
+        loc_clean = location.strip() if location and location.strip() else None
+        logger.info(f"Workflow {wf_id} started. Equipment: '{equipment_type or 'None'}', Location: '{loc_clean or 'None'}'")
 
         # 1. Input Validation
         if not complaint or len(complaint.strip()) < 3:
@@ -52,6 +54,7 @@ class MaintenanceWorkflow:
             return WorkflowResult(
                 complaint=complaint or "",
                 equipment_type=equipment_type,
+                location=loc_clean,
                 retrieved_cases=[],
                 diagnosis=None,
                 recommendation=None,
@@ -66,6 +69,7 @@ class MaintenanceWorkflow:
             return WorkflowResult(
                 complaint=complaint.strip(),
                 equipment_type=equipment_type,
+                location=loc_clean,
                 retrieved_cases=[],
                 diagnosis=None,
                 recommendation=None,
@@ -76,9 +80,10 @@ class MaintenanceWorkflow:
 
         # 2. Stage 1: Retrieval
         retrieved_cases: List[RetrievalResult] = []
+        search_query = f"Location: {loc_clean}. {complaint}" if loc_clean and loc_clean not in complaint else complaint
         try:
             retrieved_cases = self.retriever.search(
-                complaint=complaint,
+                complaint=search_query,
                 equipment_type=equipment_type,
                 top_k=top_k
             )
@@ -88,6 +93,7 @@ class MaintenanceWorkflow:
             return WorkflowResult(
                 complaint=complaint.strip(),
                 equipment_type=equipment_type,
+                location=loc_clean,
                 retrieved_cases=[],
                 diagnosis=None,
                 recommendation=None,
@@ -95,7 +101,6 @@ class MaintenanceWorkflow:
                 error=f"Retrieval failed: {e}",
                 workflow_id=wf_id
             )
-
 
         # 3. Stage 2: Diagnosis
         diagnosis: Optional[DiagnosisResult] = None
@@ -154,6 +159,7 @@ class MaintenanceWorkflow:
         return WorkflowResult(
             complaint=complaint.strip(),
             equipment_type=equipment_type,
+            location=loc_clean,
             retrieved_cases=retrieved_cases,
             diagnosis=diagnosis,
             recommendation=recommendation,
@@ -161,4 +167,5 @@ class MaintenanceWorkflow:
             error=final_err,
             workflow_id=wf_id
         )
+
 

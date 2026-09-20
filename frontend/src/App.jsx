@@ -87,8 +87,10 @@ export default function App() {
       const result = await api.analyzeComplaint({
         complaint: complaint.trim(),
         equipment_type: equipmentType || undefined,
+        location: location || undefined,
         top_k: 5,
       });
+
 
       setAnalysisResult(result);
       setActiveTab('results');

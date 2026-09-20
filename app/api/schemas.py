@@ -7,6 +7,7 @@ ALLOWED_FEEDBACK = {"Correct", "Incorrect"}
 class AnalyzeRequest(BaseModel):
     complaint: str = Field(..., min_length=3, max_length=1000, description="The maintenance complaint text.")
     equipment_type: Optional[str] = Field(None, description="Optional equipment category: 'Air Conditioning', 'Generator', or 'Elevator'.")
+    location: Optional[str] = Field(None, max_length=200, description="Optional facility location context.")
     top_k: Optional[int] = Field(5, ge=1, le=20, description="Maximum number of historical cases to retrieve.")
 
     @field_validator("complaint")
@@ -22,6 +23,15 @@ class AnalyzeRequest(BaseModel):
         if v is not None and v not in ALLOWED_EQUIPMENT:
             raise ValueError(f"Unsupported equipment_type '{v}'. Allowed types: {sorted(list(ALLOWED_EQUIPMENT))}")
         return v
+
+    @field_validator("location")
+    @classmethod
+    def validate_location(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v_stripped = v.strip()
+            return v_stripped if v_stripped else None
+        return None
+
 
 class FeedbackSubmitRequest(BaseModel):
     workflow_id: str = Field(..., min_length=1, description="The unique workflow execution identifier.")

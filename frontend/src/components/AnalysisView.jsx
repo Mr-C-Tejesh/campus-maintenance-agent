@@ -10,6 +10,7 @@ export default function AnalysisView({ result }) {
     workflow_status,
     complaint,
     equipment_type,
+    location,
     retrieved_cases = [],
     diagnosis,
     recommendation,
@@ -37,8 +38,9 @@ export default function AnalysisView({ result }) {
     return <span className="badge badge-success">Low Urgency</span>;
   };
 
+  const safeRetrievedCases = Array.isArray(retrieved_cases) ? retrieved_cases : [];
   const isNoRelevantCases =
-    workflow_status === 'NO_RELEVANT_CASES' || (retrieved_cases.length === 0 && !error);
+    workflow_status === 'NO_RELEVANT_CASES' || (safeRetrievedCases.length === 0 && !error);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -48,6 +50,7 @@ export default function AnalysisView({ result }) {
           <span>Workflow Execution: <span className="wf-id">{workflow_id || 'N/A'}</span></span>
           <span>Status: <strong style={{ color: 'var(--text-primary)' }}>{workflow_status}</strong></span>
           {equipment_type && <span>Category: {equipment_type}</span>}
+          {location && <span>Facility: {location}</span>}
         </div>
         {diagnosis && diagnosis.grounded !== undefined && (
           <span className={`badge ${diagnosis.grounded ? 'badge-success' : 'badge-warning'}`}>
@@ -55,6 +58,7 @@ export default function AnalysisView({ result }) {
           </span>
         )}
       </div>
+
 
       {/* 1. DIAGNOSIS (AI Analysis) */}
       {diagnosis && (
@@ -120,7 +124,7 @@ export default function AnalysisView({ result }) {
             <span className="badge badge-neutral">ChromaDB Vector Store</span>
           </div>
           <span className="badge badge-neutral">
-            {retrieved_cases.length} Match{retrieved_cases.length === 1 ? '' : 'es'}
+            {safeRetrievedCases.length} Match{safeRetrievedCases.length === 1 ? '' : 'es'}
           </span>
         </div>
 
@@ -147,7 +151,8 @@ export default function AnalysisView({ result }) {
                 </tr>
               </thead>
               <tbody>
-                {retrieved_cases.map((c) => {
+                {safeRetrievedCases.map((c) => {
+
                   const isExpanded = expandedCaseId === c.case_id;
                   const similarityPct = Math.round((c.similarity_score || 0) * 100);
 

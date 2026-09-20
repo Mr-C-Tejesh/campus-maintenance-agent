@@ -15,7 +15,8 @@ from app.workflow.state import WorkflowResult
 def create_sample_workflow_result(
     workflow_id: str = "wf-api-test-001",
     complaint: str = "Air conditioning is blowing warm air",
-    equipment_type: str = "Air Conditioning"
+    equipment_type: str = "Air Conditioning",
+    location: str = None
 ) -> WorkflowResult:
     case_ids = ["CASE-0001", "CASE-0002"]
     cases = [
@@ -29,7 +30,7 @@ def create_sample_workflow_result(
             action_taken="Replaced valve and recharged refrigerant",
             equipment_type=equipment_type,
             equipment_model="Carrier 5000",
-            location="Building B",
+            location=location or "Building B",
             repair_cost=3500.0,
             repair_time_hours=3.0,
             urgency="High",
@@ -62,6 +63,7 @@ def create_sample_workflow_result(
         workflow_id=workflow_id,
         complaint=complaint,
         equipment_type=equipment_type,
+        location=location,
         retrieved_cases=cases,
         diagnosis=diag,
         recommendation=rec,
@@ -73,13 +75,15 @@ class MockWorkflow:
     def __init__(self, should_fail=False):
         self.should_fail = should_fail
 
-    def process_complaint(self, complaint: str, equipment_type=None, top_k: int = 5):
+    def process_complaint(self, complaint: str, equipment_type=None, location=None, top_k: int = 5):
         if self.should_fail:
             raise RuntimeError("Simulated workflow failure")
         return create_sample_workflow_result(
             complaint=complaint,
-            equipment_type=equipment_type or "Air Conditioning"
+            equipment_type=equipment_type or "Air Conditioning",
+            location=location
         )
+
 
 
 class TestAPI(unittest.TestCase):
@@ -143,7 +147,22 @@ class TestAPI(unittest.TestCase):
         # Verify registration in registry
         self.assertIsNotNone(self.registry.get(data["workflow_id"]))
 
+    def test_analyze_complaint_with_location(self):
+        """Test POST /api/v1/analyze accepts and preserves optional location parameter."""
+        payload = {
+            "complaint": "AC unit blowing warm air",
+            "equipment_type": "Air Conditioning",
+            "location": "Laboratory Block",
+            "top_k": 5
+        }
+        response = self.client.post("/api/v1/analyze", json=payload)
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("workflow_id", data)
+        self.assertEqual(data["location"], "Laboratory Block")
+
     def test_analyze_complaint_without_equipment_type(self):
+
         """Test POST /api/v1/analyze allows optional equipment_type."""
         payload = {
             "complaint": "Strange buzzing sound coming from elevator shaft"

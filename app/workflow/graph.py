@@ -11,12 +11,16 @@ def create_maintenance_graph(workflow: MaintenanceWorkflow) -> StateGraph:
     def retrieve_node(state: GraphState) -> Dict[str, Any]:
         complaint = state.get("complaint", "")
         equipment_type = state.get("equipment_type")
+        location = state.get("location")
+        loc_clean = location.strip() if location and location.strip() else None
+        search_query = f"Location: {loc_clean}. {complaint}" if loc_clean and loc_clean not in complaint else complaint
         try:
-            cases = workflow.retriever.search(complaint, equipment_type=equipment_type)
+            cases = workflow.retriever.search(search_query, equipment_type=equipment_type)
             status = "SUCCESS" if cases else "NO_RELEVANT_CASES"
             return {"retrieved_cases": cases, "workflow_status": status, "error": None}
         except Exception as e:
             return {"retrieved_cases": [], "workflow_status": "RETRIEVAL_FAILED", "error": str(e)}
+
 
     def diagnose_node(state: GraphState) -> Dict[str, Any]:
         complaint = state.get("complaint", "")
