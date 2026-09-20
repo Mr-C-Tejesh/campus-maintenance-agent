@@ -41,19 +41,23 @@ class RecommendationService:
         self,
         api_key: Optional[str] = None,
         client: Optional[Any] = None,
-        model_name: str = "gemini-2.5-flash"
+        model_name: Optional[str] = None
     ):
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.client = client
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.api_key = api_key
+        self._has_explicit_client = client is not None
 
-        if self.client is None and self.api_key:
+        effective_key = self.api_key or os.getenv("GEMINI_API_KEY", "")
+        is_placeholder = not effective_key or effective_key.strip().startswith("your_") or "placeholder" in effective_key.lower()
+
+        if self.client is None and effective_key and not is_placeholder:
             if not HAS_GENAI:
                 logger.warning("google-genai package is not installed in the active python environment.")
                 self.client = None
             else:
                 try:
-                    self.client = genai.Client(api_key=self.api_key)
+                    self.client = genai.Client(api_key=effective_key)
                 except Exception as e:
                     logger.warning(f"Failed to initialize Gemini Client: {e}")
                     self.client = None
@@ -109,15 +113,10 @@ class RecommendationService:
             return self._fallback_recommendation(complaint, diagnosis, retrieved_cases, "No historical cases retrieved")
 
         # 3. Check LLM client availability
-        if self.client is None:
-            if not HAS_GENAI:
-                return self._fallback_recommendation(
-                    complaint, diagnosis, retrieved_cases,
-                    "google-genai package not installed in active environment"
-                )
-
-            if not self.api_key:
-                # Return deterministic fallback with error message
+        if not self._has_explicit_client:
+            api_key_to_use = self.api_key if self.api_key is not None else os.getenv("GEMINI_API_KEY")
+            if not api_key_to_use:
+                self.client = None
                 result = self._fallback_recommendation(
                     complaint, diagnosis, retrieved_cases,
                     "GEMINI_API_KEY environment variable is not configured"
@@ -125,15 +124,40 @@ class RecommendationService:
                 result.error = "GEMINI_API_KEY missing"
                 return result
 
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-            except Exception as e:
+            is_placeholder = api_key_to_use.strip().startswith("your_") or "placeholder" in api_key_to_use.lower()
+            if is_placeholder:
+                self.client = None
                 result = self._fallback_recommendation(
                     complaint, diagnosis, retrieved_cases,
-                    f"Client initialization error: {e}"
+                    "GEMINI_API_KEY is missing or set to placeholder in .env"
                 )
-                result.error = str(e)
+                result.error = "GEMINI_API_KEY missing or placeholder"
                 return result
+
+            if self.client is None:
+                if not HAS_GENAI:
+                    return self._fallback_recommendation(
+                        complaint, diagnosis, retrieved_cases,
+                        "google-genai package not installed in active environment"
+                    )
+
+                try:
+                    self.client = genai.Client(api_key=api_key_to_use)
+                except Exception as e:
+                    result = self._fallback_recommendation(
+                        complaint, diagnosis, retrieved_cases,
+                        f"Client initialization error: {e}"
+                    )
+                    result.error = str(e)
+                    return result
+
+        elif self.client is None:
+            result = self._fallback_recommendation(
+                complaint, diagnosis, retrieved_cases,
+                "No Gemini client configured"
+            )
+            result.error = "No client available"
+            return result
 
         # 4. Build prompt
         prompt = build_recommendation_prompt(

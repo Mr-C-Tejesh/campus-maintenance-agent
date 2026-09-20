@@ -40,19 +40,23 @@ class DiagnosisService:
         self,
         api_key: Optional[str] = None,
         client: Optional[Any] = None,
-        model_name: str = "gemini-2.5-flash"
+        model_name: Optional[str] = None
     ):
-        self.model_name = model_name
+        self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
         self.client = client
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.api_key = api_key
+        self._has_explicit_client = client is not None
 
-        if self.client is None and self.api_key:
+        effective_key = self.api_key or os.getenv("GEMINI_API_KEY", "")
+        is_placeholder = not effective_key or effective_key.strip().startswith("your_") or "placeholder" in effective_key.lower()
+
+        if self.client is None and effective_key and not is_placeholder:
             if not HAS_GENAI:
                 logger.warning("google-genai package is not installed in the active python environment.")
                 self.client = None
             else:
                 try:
-                    self.client = genai.Client(api_key=self.api_key)
+                    self.client = genai.Client(api_key=effective_key)
                 except Exception as e:
                     logger.warning(f"Failed to initialize Gemini Client: {e}")
                     self.client = None
@@ -110,21 +114,10 @@ class DiagnosisService:
             )
 
         # 2. Check client availability
-        if self.client is None:
-            if not HAS_GENAI:
-                return DiagnosisResult(
-                    summary="Diagnosis service unavailable: 'google-genai' package is not installed in the active Python environment.",
-                    possible_causes=[],
-                    evidence=[],
-                    reasoning="Missing dependency. Ensure you are running Python from the project's virtual environment (source venv/bin/activate).",
-                    confidence="Low",
-                    technician_checks=["Run command with ./venv/bin/python3 or activate venv"],
-                    historical_case_ids=[],
-                    grounded=False,
-                    error="google-genai package not found in current environment"
-                )
-
-            if not self.api_key:
+        if not self._has_explicit_client:
+            api_key_to_use = self.api_key if self.api_key is not None else os.getenv("GEMINI_API_KEY")
+            if not api_key_to_use:
+                self.client = None
                 return DiagnosisResult(
                     summary="Diagnosis service unavailable: GEMINI_API_KEY environment variable is not configured.",
                     possible_causes=[],
@@ -137,22 +130,62 @@ class DiagnosisService:
                     error="GEMINI_API_KEY missing"
                 )
 
-
-            # Attempt late initialization if key set
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-            except Exception as e:
+            is_placeholder = api_key_to_use.strip().startswith("your_") or "placeholder" in api_key_to_use.lower()
+            if is_placeholder:
+                self.client = None
                 return DiagnosisResult(
-                    summary=f"Failed to initialize Gemini Client: {e}",
+                    summary="Diagnosis service unavailable: GEMINI_API_KEY is missing or set to placeholder in .env.",
                     possible_causes=[],
                     evidence=[],
-                    reasoning="Client initialization error.",
+                    reasoning="A valid Gemini API key is required. Please edit your .env file and set GEMINI_API_KEY=your_actual_key from Google AI Studio (https://aistudio.google.com/).",
                     confidence="Low",
-                    technician_checks=[],
+                    technician_checks=["Get a Gemini API key from https://aistudio.google.com/ and set GEMINI_API_KEY in .env"],
                     historical_case_ids=[],
                     grounded=False,
-                    error=str(e)
+                    error="GEMINI_API_KEY missing or placeholder"
                 )
+
+            if self.client is None:
+                if not HAS_GENAI:
+                    return DiagnosisResult(
+                        summary="Diagnosis service unavailable: 'google-genai' package is not installed in the active Python environment.",
+                        possible_causes=[],
+                        evidence=[],
+                        reasoning="Missing dependency. Ensure you are running Python from the project's virtual environment (source venv/bin/activate).",
+                        confidence="Low",
+                        technician_checks=["Run command with ./venv/bin/python3 or activate venv"],
+                        historical_case_ids=[],
+                        grounded=False,
+                        error="google-genai package not found in current environment"
+                    )
+
+                try:
+                    self.client = genai.Client(api_key=api_key_to_use)
+                except Exception as e:
+                    return DiagnosisResult(
+                        summary=f"Failed to initialize Gemini Client: {e}",
+                        possible_causes=[],
+                        evidence=[],
+                        reasoning="Client initialization error.",
+                        confidence="Low",
+                        technician_checks=[],
+                        historical_case_ids=[],
+                        grounded=False,
+                        error=str(e)
+                    )
+
+        elif self.client is None:
+            return DiagnosisResult(
+                summary="Diagnosis service unavailable: No Gemini client configured.",
+                possible_causes=[],
+                evidence=[],
+                reasoning="Client is not available.",
+                confidence="Low",
+                technician_checks=[],
+                historical_case_ids=[],
+                grounded=False,
+                error="No client available"
+            )
 
         # 3. Build prompt
         prompt = build_diagnosis_prompt(complaint, retrieved_cases, equipment_type)

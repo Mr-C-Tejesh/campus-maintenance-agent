@@ -334,6 +334,26 @@ class TestAPI(unittest.TestCase):
         get_resp = self.client.get("/api/v1/feedback")
         self.assertEqual(get_resp.status_code, 500)
 
+    def test_cors_frontend_origin_configuration(self):
+        """Test that FRONTEND_ORIGIN environment variable is parsed and allowed in CORS."""
+        test_origin = "https://custom-campus-app.vercel.app"
+        old_origin = os.environ.get("FRONTEND_ORIGIN")
+        try:
+            os.environ["FRONTEND_ORIGIN"] = f"{test_origin}/, https://another-preview.vercel.app"
+            app = create_app()
+            client = TestClient(app)
+            headers = {
+                "Origin": test_origin,
+                "Access-Control-Request-Method": "GET",
+            }
+            resp = client.options("/health", headers=headers)
+            self.assertEqual(resp.headers.get("access-control-allow-origin"), test_origin)
+        finally:
+            if old_origin is not None:
+                os.environ["FRONTEND_ORIGIN"] = old_origin
+            else:
+                os.environ.pop("FRONTEND_ORIGIN", None)
+
 
 if __name__ == "__main__":
     unittest.main()

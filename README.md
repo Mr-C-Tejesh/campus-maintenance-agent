@@ -230,9 +230,52 @@ python3 run.py
 
 ### 5. Run Automated Test Suite
 ```bash
-# Run all 91 unit, integration, feedback, and API tests
-./venv/bin/python3 -m unittest discover -s tests
+# Run all unit, integration, feedback, and API tests
+./venv/bin/python3 -m unittest discover -s tests -p "test_*.py"
 ```
+
+---
+
+## Cloud Deployment Guide
+
+The application is structured for independent, scalable cloud deployment with the backend hosted on **Render** and the frontend hosted on **Vercel**.
+
+### Backend Deployment (Render)
+
+1. **Create Web Service**: Connect your GitHub repository to [Render](https://render.com/) and create a new **Web Service**.
+2. **Environment & Runtime**:
+   * **Runtime**: `Python 3`
+   * **Root Directory**: Leave blank (repository root)
+   * **Build Command**: `pip install -r requirements.txt`
+   * **Start Command**: `uvicorn app.api.app:app --host 0.0.0.0 --port $PORT`
+3. **Environment Variables**:
+   | Variable | Value / Description | Required |
+   |---|---|---|
+   | `GEMINI_API_KEY` | Your Gemini API Key from [Google AI Studio](https://aistudio.google.com/) | **Yes** |
+   | `GEMINI_MODEL` | `gemini-3.6-flash` | No (default: `gemini-3.6-flash`) |
+   | `FRONTEND_ORIGIN` | Your deployed Vercel URL (e.g. `https://<project-name>.vercel.app`) | **Yes** (enables CORS) |
+   | `PORT` | *(Automatically provided by Render)* | Injected by platform |
+4. **Health Check Endpoint**:
+   * **Path**: `/health` (returns `200 OK` with service metadata)
+5. **Data & Storage Runtime Notes**:
+   * **ChromaDB Vector Store**: Automatically initializes and indexes from the tracked `data/maintenance_records.csv` on service startup if no index exists. No manual seeding required.
+   * **SQLite Feedback Database**: Persisted locally at `data/feedback.db`. For hackathon evaluation, this provides zero-dependency operational audit storage.
+
+---
+
+### Frontend Deployment (Vercel)
+
+1. **Import Project**: Connect your GitHub repository to [Vercel](https://vercel.com/) and select **Import**.
+2. **Configure Project Settings**:
+   * **Framework Preset**: `Vite`
+   * **Root Directory**: `frontend`
+   * **Build Command**: `npm run build`
+   * **Output Directory**: `dist`
+3. **Environment Variables**:
+   | Variable | Value / Description | Required |
+   |---|---|---|
+   | `VITE_API_BASE_URL` | Deployed Render backend URL (e.g. `https://<your-service>.onrender.com`) | **Yes** |
+4. **Routing**: Handled automatically by `frontend/vercel.json` rewrite rules.
 
 ---
 

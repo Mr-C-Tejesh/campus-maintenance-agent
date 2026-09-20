@@ -29,11 +29,12 @@ def parse_args():
         default="0.0.0.0",
         help="Server host (default: 0.0.0.0)"
     )
+    default_port = int(os.getenv("PORT", "8000"))
     parser.add_argument(
         "--port", "-p",
         type=int,
-        default=8000,
-        help="Server port (default: 8000)"
+        default=default_port,
+        help=f"Server port (default: {default_port})"
     )
     parser.add_argument(
         "--reload",

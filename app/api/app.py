@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
@@ -9,7 +10,6 @@ except ImportError:
     pass
 
 def create_app() -> FastAPI:
-
     """Factory creating and configuring the FastAPI application."""
     app = FastAPI(
         title="Campus/Facility Infrastructure Decision-Support API",
@@ -17,13 +17,21 @@ def create_app() -> FastAPI:
         version="1.0.0",
     )
 
-    # CORS middleware for local frontend dashboard access
+    # Base CORS origins for local frontend development
     origins = [
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
     ]
+
+    # Incorporate deployed cloud frontend origin(s) (e.g. Vercel deployment URL)
+    frontend_origins_env = os.getenv("FRONTEND_ORIGIN", "")
+    if frontend_origins_env:
+        for item in frontend_origins_env.split(","):
+            cleaned = item.strip().rstrip("/")
+            if cleaned and cleaned not in origins:
+                origins.append(cleaned)
 
     app.add_middleware(
         CORSMiddleware,
