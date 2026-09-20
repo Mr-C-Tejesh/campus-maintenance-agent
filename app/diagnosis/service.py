@@ -1,13 +1,27 @@
 import os
+import sys
 import logging
 from typing import List, Optional, Any
-from google import genai
-from google.genai import types
+
+# Ensure parent directory is in sys.path when script is executed directly
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+try:
+    from google import genai
+    from google.genai import types
+    HAS_GENAI = True
+except ImportError:
+    HAS_GENAI = False
+    genai = None
+    types = None
 
 from app.retrieval.retriever import RetrievalResult
 from app.diagnosis.models import DiagnosisResult, PossibleCause, EvidenceItem
 from app.diagnosis.prompt import build_diagnosis_prompt
 from app.diagnosis.validator import validate_diagnosis_output, DiagnosisValidationError
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +40,16 @@ class DiagnosisService:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
 
         if self.client is None and self.api_key:
-            try:
-                self.client = genai.Client(api_key=self.api_key)
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini Client: {e}")
+            if not HAS_GENAI:
+                logger.warning("google-genai package is not installed in the active python environment.")
                 self.client = None
+            else:
+                try:
+                    self.client = genai.Client(api_key=self.api_key)
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Gemini Client: {e}")
+                    self.client = None
+
 
     def _no_evidence_fallback(
         self,
@@ -85,6 +104,19 @@ class DiagnosisService:
 
         # 2. Check client availability
         if self.client is None:
+            if not HAS_GENAI:
+                return DiagnosisResult(
+                    summary="Diagnosis service unavailable: 'google-genai' package is not installed in the active Python environment.",
+                    possible_causes=[],
+                    evidence=[],
+                    reasoning="Missing dependency. Ensure you are running Python from the project's virtual environment (source venv/bin/activate).",
+                    confidence="Low",
+                    technician_checks=["Run command with ./venv/bin/python3 or activate venv"],
+                    historical_case_ids=[],
+                    grounded=False,
+                    error="google-genai package not found in current environment"
+                )
+
             if not self.api_key:
                 return DiagnosisResult(
                     summary="Diagnosis service unavailable: GEMINI_API_KEY environment variable is not configured.",
@@ -97,6 +129,7 @@ class DiagnosisService:
                     grounded=False,
                     error="GEMINI_API_KEY missing"
                 )
+
 
             # Attempt late initialization if key set
             try:
