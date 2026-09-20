@@ -1,4 +1,17 @@
 import os
+# Configure thread concurrency limits to keep memory footprint low (<512MB)
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+try:
+    import torch
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+except Exception:
+    pass
+
 from typing import List, Dict, Any, Optional
 import chromadb
 from chromadb.utils import embedding_functions

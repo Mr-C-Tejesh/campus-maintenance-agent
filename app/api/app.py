@@ -1,4 +1,10 @@
 import os
+# Configure thread concurrency limits to keep memory footprint low (<512MB)
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
@@ -9,28 +15,12 @@ try:
 except ImportError:
     pass
 
-from contextlib import asynccontextmanager
-import logging
-
-logger = logging.getLogger(__name__)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Eagerly pre-warm vector store and embeddings on startup so first user requests are fast
-    try:
-        from app.api.routes import get_workflow
-        get_workflow()
-    except Exception as e:
-        logger.warning(f"Startup workflow warmup note: {e}")
-    yield
-
 def create_app() -> FastAPI:
     """Factory creating and configuring the FastAPI application."""
     app = FastAPI(
         title="Campus/Facility Infrastructure Decision-Support API",
         description="RESTful API for campus maintenance retrieval, diagnosis, recommendations, and technician feedback loop.",
         version="1.0.0",
-        lifespan=lifespan,
     )
 
     # Base CORS origins for local frontend development
