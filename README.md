@@ -4,29 +4,168 @@
 Facility managers need help diagnosing new equipment complaints by retrieving similar historical maintenance cases and generating evidence-grounded recommendations.
 
 ## Current Development Status
-**Phase 6 Complete**: Technician Feedback Loop is fully implemented with persistent SQLite storage and duplicate submission prevention.
+**Phase 7 Complete**: Application Backend API is fully implemented with FastAPI, CORS middleware, session-safe workflow registration, and complete technician feedback loop integration.
 
 ---
 
 ## End-to-End Architecture
 
 ```
-Maintenance Complaint (+ Equipment Filter)
-         ↓
-  Validation (Input Sanitization & Categorical Checks)
-         ↓
-  Semantic Retrieval (ChromaDB + SentenceTransformers)
-         ↓
-  Diagnosis Service (Gemini LLM + Grounding Validator)
-         ↓
-  Recommendation Engine (Cost & Repair-Time Aggregation + Urgency Rules)
-         ↓
-  Workflow Result (WorkflowResult with unique workflow_id)
-         ↓
-  Technician Review
-         ↓
-  Feedback Service ("Correct" | "Incorrect" -> SQLite Storage)
+                    [Client / Frontend Dashboard]
+                                 │
+           ┌─────────────────────┴─────────────────────┐
+           ▼                                           ▼
+POST /api/v1/analyze                        POST /api/v1/feedback
+           │                                           │
+  MaintenanceWorkflow                         WorkflowRegistry (Validation)
+           │                                           │
+   ┌───────┴──────────────────┐                        ▼
+   ▼                          ▼                 FeedbackService
+Semantic Retrieval      Diagnosis Service              │
+(ChromaDB + ST)       (Gemini Grounded LLM)            ▼
+   │                          │                 SQLite Storage
+   └───────┬──────────────────┘               (data/feedback.db)
+           ▼
+Recommendation Engine
+(Cost, Time & Urgency)
+           │
+           ▼
+     WorkflowResult
+  (Cached in Registry)
 ```
+
+---
+
+## Backend API Reference (`app/api/`)
+
+The application exposes a high-performance, asynchronous RESTful API powered by FastAPI.
+
+### Endpoints
+
+| Method | Path | Status | Description |
+|---|---|---|---|
+| `GET` | `/health` | `200 OK` | Liveness and service identity check |
+| `POST` | `/api/v1/analyze` | `200 OK` | Analyzes complaint, performs retrieval, diagnosis, recommendation, and registers workflow |
+| `POST` | `/api/v1/feedback` | `201 Created` | Submits technician operational feedback (`Correct` / `Incorrect`) for a registered workflow |
+| `GET` | `/api/v1/feedback` | `200 OK` | Retrieves persisted technician feedback records (supports `?limit=N`) |
+
+### 1. Health Check
+```http
+GET /health HTTP/1.1
+```
+**Response (200 OK):**
+```json
+{
+  "status": "ok",
+  "service": "Campus/Facility Infrastructure Decision-Support Agent",
+  "version": "1.0.0"
+}
+```
+
+### 2. Analyze Complaint
+```http
+POST /api/v1/analyze HTTP/1.1
+Content-Type: application/json
+
+{
+  "complaint": "AC is running continuously but the room remains warm",
+  "equipment_type": "Air Conditioning",
+  "top_k": 5
+}
+```
+- `equipment_type` is optional but strictly validated against: `"Air Conditioning"`, `"Generator"`, `"Elevator"`.
+- `top_k` defaults to `5` (range: 1 to 20).
+
+**Response (200 OK):**
+```json
+{
+  "workflow_id": "wf-ed30ccbf",
+  "workflow_status": "completed",
+  "complaint": "AC is running continuously but the room remains warm",
+  "equipment_type": "Air Conditioning",
+  "retrieved_cases": [
+    {
+      "case_id": "CASE-0142",
+      "distance": 0.4086,
+      "similarity_score": 0.5914,
+      "complaint": "AC is running but room remains warm.",
+      "symptoms": "Refrigerant low",
+      "root_cause": "Refrigerant leak",
+      "action_taken": "Recharged refrigerant and sealed leak",
+      "equipment_type": "Air Conditioning",
+      "repair_cost": 3500.0,
+      "repair_time_hours": 3.0,
+      "urgency": "High"
+    }
+  ],
+  "diagnosis": {
+    "summary": "Refrigerant leak detected in cooling loop.",
+    "possible_causes": [
+      {
+        "cause": "Refrigerant leak",
+        "likelihood": "High",
+        "supporting_case_ids": ["CASE-0142"],
+        "reasoning": "Consistent with warm airflow symptom."
+      }
+    ],
+    "evidence": [...],
+    "confidence": "High",
+    "grounded": true
+  },
+  "recommendation": {
+    "recommended_action": "Inspect cooling circuit and recharge refrigerant.",
+    "estimated_cost": {
+      "min_cost": 3000.0,
+      "max_cost": 4000.0,
+      "median_cost": 3500.0,
+      "formatted_range": "3000-4000 INR"
+    },
+    "estimated_repair_time": {
+      "median_hours": 3.0,
+      "formatted_reference": "3.0 hrs"
+    },
+    "urgency": "High",
+    "grounded": true
+  }
+}
+```
+
+### 3. Submit Technician Feedback
+```http
+POST /api/v1/feedback HTTP/1.1
+Content-Type: application/json
+
+{
+  "workflow_id": "wf-ed30ccbf",
+  "feedback": "Correct",
+  "notes": "Verified on-site: refrigerant leak confirmed and repaired."
+}
+```
+- **Integrity Safeguard**: Only workflow IDs generated by the server during an active session can receive feedback. Submitting an unknown or forged ID returns `404 Not Found`.
+- **Duplicate Safeguard**: Submitting feedback more than once for the same workflow returns `409 Conflict`.
+- `feedback` must be exactly `"Correct"` or `"Incorrect"`.
+
+**Response (201 Created):**
+```json
+{
+  "feedback_id": "fb-f1460daf",
+  "workflow_id": "wf-ed30ccbf",
+  "complaint": "AC is running continuously but the room remains warm",
+  "equipment_type": "Air Conditioning",
+  "retrieved_case_ids": ["CASE-0142"],
+  "diagnosis_summary": "Refrigerant leak detected in cooling loop.",
+  "recommended_action": "Inspect cooling circuit and recharge refrigerant.",
+  "technician_feedback": "Correct",
+  "timestamp": "2026-09-20T06:08:35.123456Z",
+  "notes": "Verified on-site: refrigerant leak confirmed and repaired."
+}
+```
+
+### 4. Retrieve Persisted Feedback
+```http
+GET /api/v1/feedback?limit=50 HTTP/1.1
+```
+Returns newest feedback records first. `limit` parameter supports 1 to 200 (default: 50).
 
 ---
 
@@ -48,48 +187,12 @@ Stored locally in a persistent SQLite database at `data/feedback.db` (ignored by
 - `timestamp`: UTC ISO 8601 timestamp.
 - `notes`: Optional technician qualitative notes.
 
-### 2. Validation & Duplicate Safeguards
-- **Strict Values**: Only `"Correct"` or `"Incorrect"` is accepted; arbitrary strings are rejected.
-- **Workflow Integrity**: Case IDs and diagnosis fields must originate from an authentic `WorkflowResult`.
-- **Duplicate Prevention**: Re-submitting feedback for an already-reviewed `workflow_id` is blocked and raises `DuplicateFeedbackError`.
-
 > [!NOTE]
 > **Product Guardrail**: Feedback is strictly persisted for operational auditing and future dataset curation. Feedback does **NOT** automatically retrain, fine-tune, or modify Gemini model weights or embeddings.
 
 ---
 
-## Usage in Python
-
-```python
-from app.workflow import MaintenanceWorkflow
-from app.feedback import FeedbackService
-
-# 1. Run Workflow
-workflow = MaintenanceWorkflow()
-result = workflow.process_complaint(
-    complaint="AC is running continuously but the room remains warm",
-    equipment_type="Air Conditioning"
-)
-
-# 2. Record Technician Feedback
-feedback_service = FeedbackService()
-feedback = feedback_service.save_feedback(
-    workflow_result=result,
-    feedback="Correct",
-    notes="Filter replacement resolved the cooling issue on-site."
-)
-
-print(f"Feedback recorded: {feedback.feedback_id} for workflow {feedback.workflow_id}")
-
-# 3. Read Back Stored Feedback
-all_feedback = feedback_service.list_feedback(limit=10)
-for entry in all_feedback:
-    print(f"[{entry.technician_feedback}] {entry.workflow_id}: {entry.complaint}")
-```
-
----
-
-## Quick Start & Demo Execution
+## Quick Start & Server Execution
 
 ### 1. Environment Setup
 ```bash
@@ -99,14 +202,27 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-### 2. Run Workflow Demo (CLI)
+### 2. Start the Backend API Server
+```bash
+# Start server with CLI wrapper (default: http://0.0.0.0:8000)
+python3 run.py --server
+
+# Or run with uvicorn hot reloading enabled
+python3 run.py --server --reload
+```
+
+Interactive OpenAPI documentation is immediately accessible at:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+
+### 3. Run Workflow Demo (CLI Mode)
 ```bash
 python3 run.py
 ```
 
-### 3. Run Automated Test Suite
+### 4. Run Automated Test Suite
 ```bash
-# Run all 75 unit, integration, and feedback tests
+# Run all 91 unit, integration, feedback, and API tests
 ./venv/bin/python3 -m unittest discover -s tests
 ```
 
@@ -118,6 +234,12 @@ python3 run.py
 campus-maintenance-agent/
 ├── app/
 │   ├── agents/
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── app.py
+│   │   ├── registry.py
+│   │   ├── routes.py
+│   │   └── schemas.py
 │   ├── config/
 │   ├── data/
 │   │   ├── __init__.py
@@ -162,6 +284,7 @@ campus-maintenance-agent/
 │   └── feedback.db (ignored by git)
 ├── tests/
 │   ├── __init__.py
+│   ├── test_api.py
 │   ├── test_data.py
 │   ├── test_diagnosis.py
 │   ├── test_feedback.py
