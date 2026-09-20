@@ -1,1 +1,3 @@
-# No external dependencies required for initial setup
+chromadb>=0.4.0
+sentence-transformers>=2.2.0
+
