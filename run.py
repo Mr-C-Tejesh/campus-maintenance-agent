@@ -5,7 +5,14 @@ import argparse
 # Ensure the 'app' module can be imported when running from the root
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from app.main import main
+
 
 def parse_args():
     parser = argparse.ArgumentParser(

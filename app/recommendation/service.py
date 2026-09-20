@@ -9,6 +9,13 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+try:
     from google import genai
     from google.genai import types
     HAS_GENAI = True

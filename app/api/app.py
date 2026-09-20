@@ -2,7 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import router
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 def create_app() -> FastAPI:
+
     """Factory creating and configuring the FastAPI application."""
     app = FastAPI(
         title="Campus/Facility Infrastructure Decision-Support API",
