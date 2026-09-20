@@ -25,3 +25,9 @@ Thumbs.db
 # Vector Store
 data/chroma_db/
 
+# SQLite Databases
+*.db
+*.sqlite3
+data/*.db
+
+

@@ -23,9 +23,11 @@ class WorkflowResult:
     recommendation: Optional[RecommendationResult]
     workflow_status: str
     error: Optional[str] = None
+    workflow_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "workflow_id": self.workflow_id,
             "complaint": self.complaint,
             "equipment_type": self.equipment_type,
             "retrieved_cases": [c.to_dict() for c in self.retrieved_cases],
@@ -43,3 +45,5 @@ class GraphState(TypedDict):
     recommendation: Optional[RecommendationResult]
     workflow_status: str
     error: Optional[str]
+    workflow_id: Optional[str]
+

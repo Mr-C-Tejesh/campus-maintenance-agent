@@ -1,5 +1,6 @@
 import os
 import sys
+import uuid
 import logging
 from typing import List, Optional, Any
 
@@ -35,17 +36,19 @@ class MaintenanceWorkflow:
         self,
         complaint: str,
         equipment_type: Optional[str] = None,
-        top_k: int = 5
+        top_k: int = 5,
+        workflow_id: Optional[str] = None
     ) -> WorkflowResult:
         """
         Executes the end-to-end maintenance decision workflow:
         Input Validation -> Semantic Retrieval -> Diagnosis -> Recommendation -> Result
         """
-        logger.info(f"Workflow started. Equipment filter: '{equipment_type or 'None'}'")
+        wf_id = workflow_id or f"wf-{uuid.uuid4().hex[:8]}"
+        logger.info(f"Workflow {wf_id} started. Equipment filter: '{equipment_type or 'None'}'")
 
         # 1. Input Validation
         if not complaint or len(complaint.strip()) < 3:
-            logger.warning("Workflow aborted: Complaint text is empty or too short.")
+            logger.warning(f"Workflow {wf_id} aborted: Complaint text is empty or too short.")
             return WorkflowResult(
                 complaint=complaint or "",
                 equipment_type=equipment_type,
@@ -53,12 +56,13 @@ class MaintenanceWorkflow:
                 diagnosis=None,
                 recommendation=None,
                 workflow_status="INVALID_INPUT",
-                error="Complaint text is empty or too short."
+                error="Complaint text is empty or too short.",
+                workflow_id=wf_id
             )
 
         if equipment_type is not None and equipment_type not in ALLOWED_EQUIPMENT_TYPES:
             err_msg = f"Unsupported equipment_type '{equipment_type}'. Allowed: {sorted(list(ALLOWED_EQUIPMENT_TYPES))}"
-            logger.warning(f"Workflow aborted: {err_msg}")
+            logger.warning(f"Workflow {wf_id} aborted: {err_msg}")
             return WorkflowResult(
                 complaint=complaint.strip(),
                 equipment_type=equipment_type,
@@ -66,7 +70,8 @@ class MaintenanceWorkflow:
                 diagnosis=None,
                 recommendation=None,
                 workflow_status="INVALID_INPUT",
-                error=err_msg
+                error=err_msg,
+                workflow_id=wf_id
             )
 
         # 2. Stage 1: Retrieval
@@ -87,8 +92,10 @@ class MaintenanceWorkflow:
                 diagnosis=None,
                 recommendation=None,
                 workflow_status="RETRIEVAL_FAILED",
-                error=f"Retrieval failed: {e}"
+                error=f"Retrieval failed: {e}",
+                workflow_id=wf_id
             )
+
 
         # 3. Stage 2: Diagnosis
         diagnosis: Optional[DiagnosisResult] = None
@@ -151,5 +158,7 @@ class MaintenanceWorkflow:
             diagnosis=diagnosis,
             recommendation=recommendation,
             workflow_status=status,
-            error=final_err
+            error=final_err,
+            workflow_id=wf_id
         )
+

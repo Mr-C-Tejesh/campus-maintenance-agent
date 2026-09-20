@@ -4,7 +4,7 @@
 Facility managers need help diagnosing new equipment complaints by retrieving similar historical maintenance cases and generating evidence-grounded recommendations.
 
 ## Current Development Status
-**Phase 5 Complete**: End-to-End Decision Workflow Orchestration is fully implemented with LangGraph and Python pipeline coordination.
+**Phase 6 Complete**: Technician Feedback Loop is fully implemented with persistent SQLite storage and duplicate submission prevention.
 
 ---
 
@@ -21,34 +21,71 @@ Maintenance Complaint (+ Equipment Filter)
          ↓
   Recommendation Engine (Cost & Repair-Time Aggregation + Urgency Rules)
          ↓
-  Structured Workflow Result (WorkflowResult / Decision-Support)
+  Workflow Result (WorkflowResult with unique workflow_id)
+         ↓
+  Technician Review
+         ↓
+  Feedback Service ("Correct" | "Incorrect" -> SQLite Storage)
 ```
 
 ---
 
-## LangGraph & Orchestration Rationale
+## Technician Feedback Loop (`app/feedback/`)
 
-The project track is **Multi-Agent Orchestration & Decision Support**.
+The feedback system provides a compulsory operational review loop allowing technicians to mark generated results as either **`Correct`** or **`Incorrect`**.
 
-### 1. LangGraph StateGraph Integration (`app/workflow/graph.py`)
-A minimal 3-node `StateGraph` maps 1-to-1 to the linear maintenance workflow:
+### 1. Persistence & Data Schema
+Stored locally in a persistent SQLite database at `data/feedback.db` (ignored by Git):
+- `feedback_id`: Unique identifier (e.g. `fb-xxxxxxxx`).
+- `workflow_id`: Unique workflow execution identifier (enforces 1 feedback per workflow run).
+- `complaint`: Original user complaint text.
+- `equipment_type`: Equipment type category.
+- `location`: Facility location associated with the case.
+- `retrieved_case_ids`: Exact JSON array of historical case IDs retrieved.
+- `diagnosis_summary`: Diagnosis summary generated for the complaint.
+- `recommended_action`: Action recommended to the technician.
+- `technician_feedback`: Exactly `"Correct"` or `"Incorrect"`.
+- `timestamp`: UTC ISO 8601 timestamp.
+- `notes`: Optional technician qualitative notes.
+
+### 2. Validation & Duplicate Safeguards
+- **Strict Values**: Only `"Correct"` or `"Incorrect"` is accepted; arbitrary strings are rejected.
+- **Workflow Integrity**: Case IDs and diagnosis fields must originate from an authentic `WorkflowResult`.
+- **Duplicate Prevention**: Re-submitting feedback for an already-reviewed `workflow_id` is blocked and raises `DuplicateFeedbackError`.
+
+> [!NOTE]
+> **Product Guardrail**: Feedback is strictly persisted for operational auditing and future dataset curation. Feedback does **NOT** automatically retrain, fine-tune, or modify Gemini model weights or embeddings.
+
+---
+
+## Usage in Python
+
+```python
+from app.workflow import MaintenanceWorkflow
+from app.feedback import FeedbackService
+
+# 1. Run Workflow
+workflow = MaintenanceWorkflow()
+result = workflow.process_complaint(
+    complaint="AC is running continuously but the room remains warm",
+    equipment_type="Air Conditioning"
+)
+
+# 2. Record Technician Feedback
+feedback_service = FeedbackService()
+feedback = feedback_service.save_feedback(
+    workflow_result=result,
+    feedback="Correct",
+    notes="Filter replacement resolved the cooling issue on-site."
+)
+
+print(f"Feedback recorded: {feedback.feedback_id} for workflow {feedback.workflow_id}")
+
+# 3. Read Back Stored Feedback
+all_feedback = feedback_service.list_feedback(limit=10)
+for entry in all_feedback:
+    print(f"[{entry.technician_feedback}] {entry.workflow_id}: {entry.complaint}")
 ```
-START ──> retrieve_node ──> diagnose_node ──> recommend_node ──> END
-```
-- **Modular Delegation**: Each node invokes the underlying `MaintenanceRetriever`, `DiagnosisService`, and `RecommendationService` instances directly without duplicating business logic.
-- **State Management**: Typed `GraphState` preserves `complaint`, `equipment_type`, `retrieved_cases`, `diagnosis`, `recommendation`, `workflow_status`, and `error`.
-
-### 2. Native Python Workflow Orchestrator (`app/workflow/orchestrator.py`)
-- Callable via `MaintenanceWorkflow.process_complaint(complaint, equipment_type=None)`.
-- Returns a top-level `WorkflowResult` object containing stage outputs and workflow status.
-
-### 3. Stage Failure & Status Codes
-- **`SUCCESS`**: Pipeline completed cleanly with grounded evidence.
-- **`NO_RELEVANT_CASES`**: Valid complaint executed, but no matching historical cases found. Safe ungrounded fallbacks triggered.
-- **`INVALID_INPUT`**: Aborted early due to empty text or unsupported equipment.
-- **`RETRIEVAL_FAILED`**: Vector store database connection or query failure.
-- **`DIAGNOSIS_FAILED`**: LLM diagnosis error (e.g. missing `GEMINI_API_KEY`), but recommendation fallback completes cleanly.
-- **`RECOMMENDATION_FAILED`**: LLM recommendation error.
 
 ---
 
@@ -64,39 +101,12 @@ cp .env.example .env
 
 ### 2. Run Workflow Demo (CLI)
 ```bash
-# Run manual end-to-end complaint workflow demo
 python3 run.py
 ```
 
-### 3. Usage in Python
-```python
-from app.workflow import MaintenanceWorkflow
-
-workflow = MaintenanceWorkflow()
-result = workflow.process_complaint(
-    complaint="AC is running continuously but the room remains warm",
-    equipment_type="Air Conditioning"
-)
-
-print("Workflow Status:", result.workflow_status)
-print("Retrieved Cases:", [c.case_id for c in result.retrieved_cases])
-
-if result.diagnosis:
-    print("Diagnosis Summary:", result.diagnosis.summary)
-
-if result.recommendation:
-    print("Urgency:", result.recommendation.urgency)
-    print("Cost Ref:", result.recommendation.estimated_cost.formatted_reference)
-    print("Action:", result.recommendation.recommended_action)
-```
-
----
-
-## Testing Approach
-
-Run full automated test suite (65 tests across all phases, including LangGraph execution tests and ChromaDB + LLM integration tests):
-
+### 3. Run Automated Test Suite
 ```bash
+# Run all 75 unit, integration, and feedback tests
 ./venv/bin/python3 -m unittest discover -s tests
 ```
 
@@ -118,6 +128,11 @@ campus-maintenance-agent/
 │   │   ├── prompt.py
 │   │   ├── service.py
 │   │   └── validator.py
+│   ├── feedback/
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   ├── repository.py
+│   │   └── service.py
 │   ├── models/
 │   ├── recommendation/
 │   │   ├── __init__.py
@@ -143,11 +158,13 @@ campus-maintenance-agent/
 │   └── main.py
 ├── data/
 │   ├── maintenance_records.csv
-│   └── chroma_db/  (ignored by git)
+│   ├── chroma_db/  (ignored by git)
+│   └── feedback.db (ignored by git)
 ├── tests/
 │   ├── __init__.py
 │   ├── test_data.py
 │   ├── test_diagnosis.py
+│   ├── test_feedback.py
 │   ├── test_integration.py
 │   ├── test_main.py
 │   ├── test_recommendation.py
