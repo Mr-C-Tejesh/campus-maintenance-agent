@@ -4,7 +4,7 @@
 Facility managers need help diagnosing new equipment complaints by retrieving similar historical maintenance cases and generating evidence-grounded recommendations.
 
 ## Current Development Status
-**Phase 7 Complete**: Application Backend API is fully implemented with FastAPI, CORS middleware, session-safe workflow registration, and complete technician feedback loop integration.
+**Phase 8 Complete**: Production-style facility management dashboard (React + Vite) is fully implemented, communicating directly with the FastAPI backend with distinct evidence/inference/decision-support panels and operational technician review.
 
 ---
 
@@ -215,12 +215,20 @@ Interactive OpenAPI documentation is immediately accessible at:
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
 
-### 3. Run Workflow Demo (CLI Mode)
+### 3. Start the Frontend Operations Dashboard
+```bash
+cd frontend
+npm install
+npm run dev
+# Dashboard opens on http://localhost:5173
+```
+
+### 4. Run Workflow Demo (CLI Mode)
 ```bash
 python3 run.py
 ```
 
-### 4. Run Automated Test Suite
+### 5. Run Automated Test Suite
 ```bash
 # Run all 91 unit, integration, feedback, and API tests
 ./venv/bin/python3 -m unittest discover -s tests
@@ -282,6 +290,27 @@ campus-maintenance-agent/
 │   ├── maintenance_records.csv
 │   ├── chroma_db/  (ignored by git)
 │   └── feedback.db (ignored by git)
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── AnalysisView.jsx
+│   │   │   ├── ComplaintPanel.jsx
+│   │   │   ├── FeedbackHistory.jsx
+│   │   │   ├── FeedbackPanel.jsx
+│   │   │   ├── Header.jsx
+│   │   │   └── Sidebar.jsx
+│   │   ├── services/
+│   │   │   └── api.js
+│   │   ├── styles/
+│   │   │   └── index.css
+│   │   ├── App.jsx
+│   │   └── main.jsx
+│   ├── .env.example
+│   ├── index.html
+│   ├── package.json
+│   ├── README.md
+│   └── vite.config.js
 ├── tests/
 │   ├── __init__.py
 │   ├── test_api.py
@@ -299,3 +328,4 @@ campus-maintenance-agent/
 ├── requirements.txt
 └── run.py
 ```
+
