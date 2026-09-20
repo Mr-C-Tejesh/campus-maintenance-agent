@@ -110,6 +110,17 @@ class TestAPI(unittest.TestCase):
             import shutil
             shutil.rmtree(self.temp_dir)
 
+    def test_root_endpoint(self):
+        """Test GET / and HEAD / return 200 and service metadata."""
+        get_resp = self.client.get("/")
+        self.assertEqual(get_resp.status_code, 200)
+        data = get_resp.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["docs"], "/docs")
+
+        head_resp = self.client.head("/")
+        self.assertEqual(head_resp.status_code, 200)
+
     def test_health_check(self):
         """Test GET /health returns 200 and healthy status."""
         response = self.client.get("/health")

@@ -24,6 +24,19 @@ def get_feedback_service() -> FeedbackService:
 def get_registry() -> WorkflowRegistry:
     return default_registry
 
+# Route 0: Service Root
+@router.get("/")
+@router.head("/")
+def root():
+    return {
+        "status": "ok",
+        "service": "Campus/Facility Infrastructure Decision-Support Agent",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health",
+        "message": "Campus Maintenance Decision Support API is live. Visit /docs for OpenAPI documentation."
+    }
+
 # Route 1: Health
 @router.get("/health", response_model=HealthResponse)
 def health_check():
