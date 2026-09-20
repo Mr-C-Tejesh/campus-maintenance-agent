@@ -4,107 +4,101 @@
 Facility managers need help diagnosing new equipment complaints by retrieving similar historical maintenance cases and generating evidence-grounded recommendations.
 
 ## Current Development Status
-**Phase 3 Complete**: Evidence-Grounded Diagnosis Layer is fully implemented using Google Gemini LLM (`google-genai`), strict grounding validation, and ChromaDB vector retrieval.
+**Phase 5 Complete**: End-to-End Decision Workflow Orchestration is fully implemented with LangGraph and Python pipeline coordination.
 
 ---
 
-## Architecture Overview
+## End-to-End Architecture
 
 ```
-New Complaint + Equipment Filter
+Maintenance Complaint (+ Equipment Filter)
          ↓
-  MaintenanceRetriever (ChromaDB + SentenceTransformers)
+  Validation (Input Sanitization & Categorical Checks)
          ↓
-  Retrieved Historical Cases (RetrievalResult)
+  Semantic Retrieval (ChromaDB + SentenceTransformers)
          ↓
-  DiagnosisService (Gemini LLM + Grounding Validator)
+  Diagnosis Service (Gemini LLM + Grounding Validator)
          ↓
-  Structured Evidence-Grounded Diagnosis (DiagnosisResult)
+  Recommendation Engine (Cost & Repair-Time Aggregation + Urgency Rules)
+         ↓
+  Structured Workflow Result (WorkflowResult / Decision-Support)
 ```
 
 ---
 
-## Retrieval & Diagnosis System
+## LangGraph & Orchestration Rationale
 
-### 1. Vector Retrieval Layer (`app/retrieval/`)
-- **Embedding Model**: `all-MiniLM-L6-v2` via `sentence-transformers` (384 dimensions).
-- **Vector Store**: Local persistent ChromaDB database located at `data/chroma_db/`.
-- **Distance Metric**: Cosine distance (`hnsw:space`: `cosine`).
-- **Idempotence**: `case_id` is used as primary key with `upsert` operations.
+The project track is **Multi-Agent Orchestration & Decision Support**.
 
-### 2. Diagnosis Layer (`app/diagnosis/`)
-- **LLM Provider**: Google Gemini (`gemini-2.5-flash`) via the official `google-genai` Python SDK.
-- **Environment Variable**: `GEMINI_API_KEY` (configured via environment or `.env`).
-- **Evidence-Grounding Strategy**:
-  - **HISTORICAL EVIDENCE**: Factual symptoms, root causes, and actions taken directly from retrieved historical cases.
-  - **INFERENCE**: The model's technical reasoning connecting new complaints to retrieved evidence.
-- **Hallucination Safeguards**:
-  - Raw LLM output is validated by `validate_diagnosis_output`.
-  - Every cited `case_id` is strictly cross-checked against the actual set of retrieved cases. Any unretrieved/hallucinated `case_id` is automatically rejected.
-- **No-Evidence Fallback**:
-  - If no relevant historical cases are retrieved (or complaint is empty), the service returns a safe fallback result with `grounded=False`, `confidence="Low"`, and mandatory physical technician inspection steps.
-- **Qualitative Confidence**:
-  - Categorized strictly as `"High"`, `"Medium"`, or `"Low"` reflecting evidence strength (no arbitrary calibrated probability numbers).
+### 1. LangGraph StateGraph Integration (`app/workflow/graph.py`)
+A minimal 3-node `StateGraph` maps 1-to-1 to the linear maintenance workflow:
+```
+START ──> retrieve_node ──> diagnose_node ──> recommend_node ──> END
+```
+- **Modular Delegation**: Each node invokes the underlying `MaintenanceRetriever`, `DiagnosisService`, and `RecommendationService` instances directly without duplicating business logic.
+- **State Management**: Typed `GraphState` preserves `complaint`, `equipment_type`, `retrieved_cases`, `diagnosis`, `recommendation`, `workflow_status`, and `error`.
+
+### 2. Native Python Workflow Orchestrator (`app/workflow/orchestrator.py`)
+- Callable via `MaintenanceWorkflow.process_complaint(complaint, equipment_type=None)`.
+- Returns a top-level `WorkflowResult` object containing stage outputs and workflow status.
+
+### 3. Stage Failure & Status Codes
+- **`SUCCESS`**: Pipeline completed cleanly with grounded evidence.
+- **`NO_RELEVANT_CASES`**: Valid complaint executed, but no matching historical cases found. Safe ungrounded fallbacks triggered.
+- **`INVALID_INPUT`**: Aborted early due to empty text or unsupported equipment.
+- **`RETRIEVAL_FAILED`**: Vector store database connection or query failure.
+- **`DIAGNOSIS_FAILED`**: LLM diagnosis error (e.g. missing `GEMINI_API_KEY`), but recommendation fallback completes cleanly.
+- **`RECOMMENDATION_FAILED`**: LLM recommendation error.
 
 ---
 
-## Diagnosis Interface Usage
+## Quick Start & Demo Execution
 
+### 1. Environment Setup
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+### 2. Run Workflow Demo (CLI)
+```bash
+# Run manual end-to-end complaint workflow demo
+python3 run.py
+```
+
+### 3. Usage in Python
 ```python
-from app.retrieval import initialize_vector_store, MaintenanceRetriever
-from app.diagnosis import DiagnosisService
+from app.workflow import MaintenanceWorkflow
 
-# 1. Initialize Retrieval & Vector Store
-vector_store = initialize_vector_store()
-retriever = MaintenanceRetriever(vector_store)
-
-# 2. Retrieve relevant historical cases
-retrieved_cases = retriever.search(
-    complaint="AC is running continuously but the room is still warm",
-    equipment_type="Air Conditioning",
-    top_k=5
-)
-
-# 3. Generate grounded diagnosis
-diagnosis_service = DiagnosisService()  # reads GEMINI_API_KEY from environment
-diagnosis = diagnosis_service.diagnose(
-    complaint="AC is running continuously but the room is still warm",
-    retrieved_cases=retrieved_cases,
+workflow = MaintenanceWorkflow()
+result = workflow.process_complaint(
+    complaint="AC is running continuously but the room remains warm",
     equipment_type="Air Conditioning"
 )
 
-print("Summary:", diagnosis.summary)
-print("Confidence:", diagnosis.confidence)
-print("Grounded:", diagnosis.grounded)
-print("Cited Cases:", diagnosis.historical_case_ids)
+print("Workflow Status:", result.workflow_status)
+print("Retrieved Cases:", [c.case_id for c in result.retrieved_cases])
 
-for cause in diagnosis.possible_causes:
-    print(f"- {cause.cause} ({cause.likelihood}): {cause.explanation}")
+if result.diagnosis:
+    print("Diagnosis Summary:", result.diagnosis.summary)
+
+if result.recommendation:
+    print("Urgency:", result.recommendation.urgency)
+    print("Cost Ref:", result.recommendation.estimated_cost.formatted_reference)
+    print("Action:", result.recommendation.recommended_action)
 ```
 
 ---
 
 ## Testing Approach
 
-The test suite includes deterministic offline unit & integration tests using dependency injection / mock clients to verify LLM response parsing, grounding enforcement, and failure handling without requiring live API calls during automated test runs.
+Run full automated test suite (65 tests across all phases, including LangGraph execution tests and ChromaDB + LLM integration tests):
 
 ```bash
-# Run full unit and integration test suite (40 tests)
-python3 -m unittest discover -s tests
+./venv/bin/python3 -m unittest discover -s tests
 ```
-
----
-
-## Environment Setup
-
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-2. Set your Gemini API key in `.env`:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key_here
-   ```
 
 ---
 
@@ -125,6 +119,14 @@ campus-maintenance-agent/
 │   │   ├── service.py
 │   │   └── validator.py
 │   ├── models/
+│   ├── recommendation/
+│   │   ├── __init__.py
+│   │   ├── cost_engine.py
+│   │   ├── models.py
+│   │   ├── prompt.py
+│   │   ├── service.py
+│   │   ├── urgency_engine.py
+│   │   └── validator.py
 │   ├── retrieval/
 │   │   ├── __init__.py
 │   │   ├── document_builder.py
@@ -132,6 +134,11 @@ campus-maintenance-agent/
 │   │   └── vector_store.py
 │   ├── services/
 │   ├── utils/
+│   ├── workflow/
+│   │   ├── __init__.py
+│   │   ├── graph.py
+│   │   ├── orchestrator.py
+│   │   └── state.py
 │   ├── __init__.py
 │   └── main.py
 ├── data/
@@ -141,8 +148,11 @@ campus-maintenance-agent/
 │   ├── __init__.py
 │   ├── test_data.py
 │   ├── test_diagnosis.py
+│   ├── test_integration.py
 │   ├── test_main.py
-│   └── test_retrieval.py
+│   ├── test_recommendation.py
+│   ├── test_retrieval.py
+│   └── test_workflow.py
 ├── .env.example
 ├── .gitignore
 ├── README.md
