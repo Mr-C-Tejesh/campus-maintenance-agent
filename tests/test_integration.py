@@ -45,7 +45,7 @@ class TestIntegrationRealRetrievalMockedLLM(unittest.TestCase):
         cls.vector_store = initialize_vector_store(
             csv_path=cls.csv_path,
             persist_directory=cls.temp_dir,
-            force_rebuild=True
+            force_rebuild=False
         )
         cls.retriever = MaintenanceRetriever(cls.vector_store)
         cls.diag_svc = MockDiagnosisService()
