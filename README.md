@@ -1,200 +1,107 @@
-# Campus/Facility Infrastructure Decision-Support Agent
+# Campus Maintenance Agent
 
-## Problem Statement
-Facility managers need help diagnosing new equipment complaints by retrieving similar historical maintenance cases and generating evidence-grounded recommendations.
+**Evidence-grounded AI decision support for campus and facility maintenance teams.**
 
-## Current Development Status
-**Phase 8 Complete**: Production-style facility management dashboard (React + Vite) is fully implemented, communicating directly with the FastAPI backend with distinct evidence/inference/decision-support panels and operational technician review.
+Campus Maintenance Agent converts a natural-language equipment complaint into a traceable maintenance decision. It retrieves similar historical cases, generates a grounded diagnosis, recommends a likely action, estimates historical cost/repair time/urgency, and records technician feedback.
 
----
+> **Hackathon note:** the demo uses a synthetic maintenance dataset. This is decision support, not autonomous repair; qualified technicians still perform physical inspection and repairs.
 
-## End-to-End Architecture
+## Architecture
 
+```text
+React Dashboard
+      ↓
+FastAPI API
+      ↓
+Input Validation
+      ↓
+ChromaDB Semantic Retrieval
+(all-MiniLM-L6-v2)
+      ↓
+Historical Evidence
+      ↓
+Gemini Diagnosis
++ grounding validator
+      ↓
+Recommendation
+Gemini action text
++
+deterministic cost/time/urgency
+      ↓
+Technician Review
+Correct / Incorrect
+      ↓
+SQLite Audit Log
 ```
-                    [Client / Frontend Dashboard]
-                                 │
-           ┌─────────────────────┴─────────────────────┐
-           ▼                                           ▼
-POST /api/v1/analyze                        POST /api/v1/feedback
-           │                                           │
-  MaintenanceWorkflow                         WorkflowRegistry (Validation)
-           │                                           │
-   ┌───────┴──────────────────┐                        ▼
-   ▼                          ▼                 FeedbackService
-Semantic Retrieval      Diagnosis Service              │
-(ChromaDB + ST)       (Gemini Grounded LLM)            ▼
-   │                          │                 SQLite Storage
-   └───────┬──────────────────┘               (data/feedback.db)
-           ▼
-Recommendation Engine
-(Cost, Time & Urgency)
-           │
-           ▼
-     WorkflowResult
-  (Cached in Registry)
+
+LangGraph orchestrates the core workflow:
+
+```text
+START → retrieve → diagnose → recommend → END
 ```
 
----
+## Key technical choices
 
-## Backend API Reference (`app/api/`)
+### RAG / semantic retrieval
+- **Vector store:** ChromaDB
+- **Embeddings:** Sentence Transformers `all-MiniLM-L6-v2`
+- **Distance:** cosine distance
+- **Default top-k:** 5
+- **Relevance threshold:** cosine distance ≤ 0.75
+- **Dataset:** 250 synthetic records covering Air Conditioning, Generator, and Elevator cases
 
-The application exposes a high-performance, asynchronous RESTful API powered by FastAPI.
+Searchable documents combine equipment type/model, location, maintenance type, complaint, symptoms, root cause, and action taken. Original metadata, including case IDs, stays attached to the retrieved evidence.
 
-### Endpoints
+### Evidence-grounded diagnosis
+Gemini receives the complaint plus retrieved cases and returns structured diagnosis data including causes, evidence, reasoning, confidence, technician checks, and supporting case IDs.
 
-| Method | Path | Status | Description |
-|---|---|---|---|
-| `GET` | `/health` | `200 OK` | Liveness and service identity check |
-| `POST` | `/api/v1/analyze` | `200 OK` | Analyzes complaint, performs retrieval, diagnosis, recommendation, and registers workflow |
-| `POST` | `/api/v1/feedback` | `201 Created` | Submits technician operational feedback (`Correct` / `Incorrect`) for a registered workflow |
-| `GET` | `/api/v1/feedback` | `200 OK` | Retrieves persisted technician feedback records (supports `?limit=N`) |
+The application validates the output. A supporting case ID must correspond to a case actually retrieved for that workflow. With no useful evidence, the system falls back to a low-confidence, inspection-first response.
 
-### 1. Health Check
-```http
-GET /health HTTP/1.1
-```
-**Response (200 OK):**
+### Recommendation engine
+The LLM generates technician-friendly action text. Deterministic application logic computes:
+- historical minimum / maximum / median repair cost
+- historical minimum / maximum / median repair time
+- urgency using complaint signals, retrieved-case urgency, and diagnosis confidence/likelihood
+
+This keeps operational numbers reproducible and explainable.
+
+### Technician feedback
+Each analysis receives a server-generated workflow ID. Technicians can mark the result **Correct** or **Incorrect** and add notes. Feedback is stored with the complaint, location, retrieved case IDs, diagnosis, recommendation and timestamp.
+
+**Feedback does not automatically retrain Gemini or modify the embedding model.**
+
+## Tech stack
+
+**Backend:** Python, FastAPI, LangGraph, ChromaDB, Sentence Transformers, Google Gemini via `google-genai`, SQLite
+
+**Frontend:** React 18, Vite 5, plain CSS
+
+**Safeguards:** input validation, equipment validation, relevance thresholding, grounding validation, server-generated workflow IDs, duplicate feedback protection, controlled fallbacks, environment variables for secrets.
+
+## API
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | `/health` | Health check |
+| POST | `/api/v1/analyze` | Retrieval → diagnosis → recommendation |
+| POST | `/api/v1/feedback` | Correct/Incorrect technician feedback |
+| GET | `/api/v1/feedback?limit=50` | Recent persisted feedback |
+
+Example:
+
 ```json
-{
-  "status": "ok",
-  "service": "Campus/Facility Infrastructure Decision-Support Agent",
-  "version": "1.0.0"
-}
-```
-
-### 2. Analyze Complaint
-```http
-POST /api/v1/analyze HTTP/1.1
-Content-Type: application/json
-
 {
   "complaint": "AC is running continuously but the room remains warm",
   "equipment_type": "Air Conditioning",
+  "location": "Laboratory Block",
   "top_k": 5
 }
 ```
-- `equipment_type` is optional but strictly validated against: `"Air Conditioning"`, `"Generator"`, `"Elevator"`.
-- `top_k` defaults to `5` (range: 1 to 20).
 
-**Response (200 OK):**
-```json
-{
-  "workflow_id": "wf-ed30ccbf",
-  "workflow_status": "completed",
-  "complaint": "AC is running continuously but the room remains warm",
-  "equipment_type": "Air Conditioning",
-  "retrieved_cases": [
-    {
-      "case_id": "CASE-0142",
-      "distance": 0.4086,
-      "similarity_score": 0.5914,
-      "complaint": "AC is running but room remains warm.",
-      "symptoms": "Refrigerant low",
-      "root_cause": "Refrigerant leak",
-      "action_taken": "Recharged refrigerant and sealed leak",
-      "equipment_type": "Air Conditioning",
-      "repair_cost": 3500.0,
-      "repair_time_hours": 3.0,
-      "urgency": "High"
-    }
-  ],
-  "diagnosis": {
-    "summary": "Refrigerant leak detected in cooling loop.",
-    "possible_causes": [
-      {
-        "cause": "Refrigerant leak",
-        "likelihood": "High",
-        "supporting_case_ids": ["CASE-0142"],
-        "reasoning": "Consistent with warm airflow symptom."
-      }
-    ],
-    "evidence": [...],
-    "confidence": "High",
-    "grounded": true
-  },
-  "recommendation": {
-    "recommended_action": "Inspect cooling circuit and recharge refrigerant.",
-    "estimated_cost": {
-      "min_cost": 3000.0,
-      "max_cost": 4000.0,
-      "median_cost": 3500.0,
-      "formatted_range": "3000-4000 INR"
-    },
-    "estimated_repair_time": {
-      "median_hours": 3.0,
-      "formatted_reference": "3.0 hrs"
-    },
-    "urgency": "High",
-    "grounded": true
-  }
-}
-```
+## Run locally
 
-### 3. Submit Technician Feedback
-```http
-POST /api/v1/feedback HTTP/1.1
-Content-Type: application/json
+### Backend
 
-{
-  "workflow_id": "wf-ed30ccbf",
-  "feedback": "Correct",
-  "notes": "Verified on-site: refrigerant leak confirmed and repaired."
-}
-```
-- **Integrity Safeguard**: Only workflow IDs generated by the server during an active session can receive feedback. Submitting an unknown or forged ID returns `404 Not Found`.
-- **Duplicate Safeguard**: Submitting feedback more than once for the same workflow returns `409 Conflict`.
-- `feedback` must be exactly `"Correct"` or `"Incorrect"`.
-
-**Response (201 Created):**
-```json
-{
-  "feedback_id": "fb-f1460daf",
-  "workflow_id": "wf-ed30ccbf",
-  "complaint": "AC is running continuously but the room remains warm",
-  "equipment_type": "Air Conditioning",
-  "retrieved_case_ids": ["CASE-0142"],
-  "diagnosis_summary": "Refrigerant leak detected in cooling loop.",
-  "recommended_action": "Inspect cooling circuit and recharge refrigerant.",
-  "technician_feedback": "Correct",
-  "timestamp": "2026-09-20T06:08:35.123456Z",
-  "notes": "Verified on-site: refrigerant leak confirmed and repaired."
-}
-```
-
-### 4. Retrieve Persisted Feedback
-```http
-GET /api/v1/feedback?limit=50 HTTP/1.1
-```
-Returns newest feedback records first. `limit` parameter supports 1 to 200 (default: 50).
-
----
-
-## Technician Feedback Loop (`app/feedback/`)
-
-The feedback system provides a compulsory operational review loop allowing technicians to mark generated results as either **`Correct`** or **`Incorrect`**.
-
-### 1. Persistence & Data Schema
-Stored locally in a persistent SQLite database at `data/feedback.db` (ignored by Git):
-- `feedback_id`: Unique identifier (e.g. `fb-xxxxxxxx`).
-- `workflow_id`: Unique workflow execution identifier (enforces 1 feedback per workflow run).
-- `complaint`: Original user complaint text.
-- `equipment_type`: Equipment type category.
-- `location`: Facility location associated with the case.
-- `retrieved_case_ids`: Exact JSON array of historical case IDs retrieved.
-- `diagnosis_summary`: Diagnosis summary generated for the complaint.
-- `recommended_action`: Action recommended to the technician.
-- `technician_feedback`: Exactly `"Correct"` or `"Incorrect"`.
-- `timestamp`: UTC ISO 8601 timestamp.
-- `notes`: Optional technician qualitative notes.
-
-> [!NOTE]
-> **Product Guardrail**: Feedback is strictly persisted for operational auditing and future dataset curation. Feedback does **NOT** automatically retrain, fine-tune, or modify Gemini model weights or embeddings.
-
----
-
-## Quick Start & Server Execution
-
-### 1. Environment Setup
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -202,173 +109,87 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-### 2. Start the Backend API Server
-```bash
-# Start server with CLI wrapper (default: http://0.0.0.0:8000)
-python3 run.py --server
+Set:
 
-# Or run with uvicorn hot reloading enabled
-python3 run.py --server --reload
+```env
+GEMINI_API_KEY=your_actual_key
+GEMINI_MODEL=gemini-3.6-flash
 ```
 
-Interactive OpenAPI documentation is immediately accessible at:
-- **Swagger UI**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
+Run:
 
-### 3. Start the Frontend Operations Dashboard
+```bash
+python3 run.py --server
+```
+
+Swagger: `http://localhost:8000/docs`
+
+### Frontend
+
 ```bash
 cd frontend
 npm install
 npm run dev
-# Dashboard opens on http://localhost:5173
 ```
 
-### 4. Run Workflow Demo (CLI Mode)
-```bash
-python3 run.py
+Dashboard: `http://localhost:5173`
+
+For a hosted backend, configure:
+
+```env
+VITE_API_BASE_URL=https://your-backend-url
 ```
 
-### 5. Run Automated Test Suite
+### Tests
+
 ```bash
-# Run all unit, integration, feedback, and API tests
 ./venv/bin/python3 -m unittest discover -s tests -p "test_*.py"
 ```
 
----
+## Deployment
 
-## Cloud Deployment Guide
+### Render backend
+- Runtime: Python 3
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn app.api.app:app --host 0.0.0.0 --port $PORT`
+- Environment variables: `GEMINI_API_KEY`, `GEMINI_MODEL` (optional), `FRONTEND_ORIGIN`
 
-The application is structured for independent, scalable cloud deployment with the backend hosted on **Render** and the frontend hosted on **Vercel**.
+### Vercel frontend
+- Framework: Vite
+- Root directory: `frontend`
+- Build: `npm run build`
+- Output: `dist`
+- Environment variable: `VITE_API_BASE_URL`
 
-### Backend Deployment (Render)
+After the Vercel URL is known, set `FRONTEND_ORIGIN` on Render and redeploy the backend.
 
-1. **Create Web Service**: Connect your GitHub repository to [Render](https://render.com/) and create a new **Web Service**.
-2. **Environment & Runtime**:
-   * **Runtime**: `Python 3`
-   * **Root Directory**: Leave blank (repository root)
-   * **Build Command**: `pip install -r requirements.txt`
-   * **Start Command**: `uvicorn app.api.app:app --host 0.0.0.0 --port $PORT`
-3. **Environment Variables**:
-   | Variable | Value / Description | Required |
-   |---|---|---|
-   | `GEMINI_API_KEY` | Your Gemini API Key from [Google AI Studio](https://aistudio.google.com/) | **Yes** |
-   | `GEMINI_MODEL` | `gemini-3.6-flash` | No (default: `gemini-3.6-flash`) |
-   | `FRONTEND_ORIGIN` | Your deployed Vercel URL (e.g. `https://<project-name>.vercel.app`) | **Yes** (enables CORS) |
-   | `PORT` | *(Automatically provided by Render)* | Injected by platform |
-4. **Health Check Endpoint**:
-   * **Path**: `/health` (returns `200 OK` with service metadata)
-5. **Data & Storage Runtime Notes**:
-   * **ChromaDB Vector Store**: Automatically initializes and indexes from the tracked `data/maintenance_records.csv` on service startup if no index exists. No manual seeding required.
-   * **SQLite Feedback Database**: Persisted locally at `data/feedback.db`. For hackathon evaluation, this provides zero-dependency operational audit storage.
+## Limitations
 
----
+- The maintenance archive is synthetic rather than connected to a real CMMS.
+- ChromaDB and SQLite are local-storage choices for the prototype.
+- The system is decision support, not autonomous repair.
+- Diagnosis quality depends on historical data coverage and retrieval quality.
+- Production use would need managed persistence, authentication/RBAC, stronger observability, and formal evaluation against real maintenance outcomes.
 
-### Frontend Deployment (Vercel)
+## Future scope
 
-1. **Import Project**: Connect your GitHub repository to [Vercel](https://vercel.com/) and select **Import**.
-2. **Configure Project Settings**:
-   * **Framework Preset**: `Vite`
-   * **Root Directory**: `frontend`
-   * **Build Command**: `npm run build`
-   * **Output Directory**: `dist`
-3. **Environment Variables**:
-   | Variable | Value / Description | Required |
-   |---|---|---|
-   | `VITE_API_BASE_URL` | Deployed Render backend URL (e.g. `https://<your-service>.onrender.com`) | **Yes** |
-4. **Routing**: Handled automatically by `frontend/vercel.json` rewrite rules.
+Real CMMS/work-order integration, managed PostgreSQL + pgvector, authentication and technician roles, retrieval/diagnosis evaluation dashboards, trend analysis, and multimodal evidence such as photos, meter readings and error-code scans.
 
----
+## Project structure
 
-## Current Project Structure
-
-```
+```text
 campus-maintenance-agent/
 ├── app/
-│   ├── agents/
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── app.py
-│   │   ├── registry.py
-│   │   ├── routes.py
-│   │   └── schemas.py
-│   ├── config/
-│   ├── data/
-│   │   ├── __init__.py
-│   │   └── loader.py
-│   ├── diagnosis/
-│   │   ├── __init__.py
-│   │   ├── models.py
-│   │   ├── prompt.py
-│   │   ├── service.py
-│   │   └── validator.py
-│   ├── feedback/
-│   │   ├── __init__.py
-│   │   ├── models.py
-│   │   ├── repository.py
-│   │   └── service.py
-│   ├── models/
-│   ├── recommendation/
-│   │   ├── __init__.py
-│   │   ├── cost_engine.py
-│   │   ├── models.py
-│   │   ├── prompt.py
-│   │   ├── service.py
-│   │   ├── urgency_engine.py
-│   │   └── validator.py
-│   ├── retrieval/
-│   │   ├── __init__.py
-│   │   ├── document_builder.py
-│   │   ├── retriever.py
-│   │   └── vector_store.py
-│   ├── services/
-│   ├── utils/
-│   ├── workflow/
-│   │   ├── __init__.py
-│   │   ├── graph.py
-│   │   ├── orchestrator.py
-│   │   └── state.py
-│   ├── __init__.py
-│   └── main.py
-├── data/
-│   ├── maintenance_records.csv
-│   ├── chroma_db/  (ignored by git)
-│   └── feedback.db (ignored by git)
-├── frontend/
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── AnalysisView.jsx
-│   │   │   ├── ComplaintPanel.jsx
-│   │   │   ├── FeedbackHistory.jsx
-│   │   │   ├── FeedbackPanel.jsx
-│   │   │   ├── Header.jsx
-│   │   │   └── Sidebar.jsx
-│   │   ├── services/
-│   │   │   └── api.js
-│   │   ├── styles/
-│   │   │   └── index.css
-│   │   ├── App.jsx
-│   │   └── main.jsx
-│   ├── .env.example
-│   ├── index.html
-│   ├── package.json
-│   ├── README.md
-│   └── vite.config.js
+│   ├── api/              # FastAPI routes/schemas
+│   ├── data/             # Dataset loading/validation
+│   ├── diagnosis/        # Gemini diagnosis + grounding
+│   ├── feedback/         # Technician feedback + SQLite
+│   ├── recommendation/   # Cost/time/urgency + action
+│   ├── retrieval/        # ChromaDB semantic search
+│   └── workflow/         # LangGraph orchestration
+├── data/maintenance_records.csv
+├── frontend/             # React dashboard
 ├── tests/
-│   ├── __init__.py
-│   ├── test_api.py
-│   ├── test_data.py
-│   ├── test_diagnosis.py
-│   ├── test_feedback.py
-│   ├── test_integration.py
-│   ├── test_main.py
-│   ├── test_recommendation.py
-│   ├── test_retrieval.py
-│   └── test_workflow.py
-├── .env.example
-├── .gitignore
-├── README.md
 ├── requirements.txt
 └── run.py
 ```
-
